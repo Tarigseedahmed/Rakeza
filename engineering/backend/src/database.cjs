@@ -105,6 +105,7 @@ function openDatabase(dataDir) {
     CREATE INDEX IF NOT EXISTS employee_documents_expiry_idx ON employee_documents(organization_id,expires_on);
     CREATE INDEX IF NOT EXISTS organization_documents_expiry_idx ON organization_documents(organization_id,expires_on);
     CREATE INDEX IF NOT EXISTS app_records_module_idx ON app_records(organization_id,module,updated_at DESC);
+    CREATE INDEX IF NOT EXISTS app_records_module_page_idx ON app_records(organization_id,module,updated_at DESC,id DESC);
     CREATE INDEX IF NOT EXISTS audit_org_time_idx ON audit_events(organization_id,occurred_at DESC);
   `);
   return db;

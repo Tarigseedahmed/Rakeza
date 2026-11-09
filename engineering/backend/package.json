@@ -3,7 +3,7 @@
   "private": true,
   "type": "commonjs",
   "main": "src/server.cjs",
-  "scripts": { "dev": "node --watch src/server.cjs", "start": "node src/server.cjs" },
+  "scripts": { "dev": "node --watch src/server.cjs", "start": "node src/server.cjs", "stress:million": "node scripts/stress-million.cjs" },
   "dependencies": {
     "bcryptjs": "latest",
     "better-sqlite3": "latest",

@@ -47,19 +47,49 @@ function requireAuth(req,res,next){
 function requireRole(...roles){return (req,res,next)=>roles.includes(req.user.role)?next():res.status(403).json({code:'FORBIDDEN',message:'You do not have permission for this action'});}
 function logSafeError(res,error){console.error(error);return res.status(500).json({code:'INTERNAL_ERROR',message:'The request could not be completed'});}
 function parsePayload(value){try{return JSON.parse(value||'{}');}catch{return {};}}
-function findModuleRows(orgId,module){
-  if(module==='employees')return db.prepare('SELECT id,payload FROM employees WHERE organization_id=? ORDER BY full_name').all(orgId).map(r=>({...parsePayload(r.payload),id:r.id}));
-  if(module==='employeeDocs')return db.prepare(`SELECT d.id,d.payload,d.expires_on,e.full_name,e.employee_number,
-    (SELECT a.original_name FROM attachments a WHERE a.employee_document_id=d.id ORDER BY a.created_at DESC LIMIT 1) AS attachment_name,
-    (SELECT a.id FROM attachments a WHERE a.employee_document_id=d.id ORDER BY a.created_at DESC LIMIT 1) AS attachment_id
-    FROM employee_documents d JOIN employees e ON e.id=d.employee_id WHERE d.organization_id=? ORDER BY e.full_name,d.expires_on`).all(orgId)
-    .map(r=>({...parsePayload(r.payload),id:r.id,employeeName:r.full_name,employeeNumber:r.employee_number,expiresOn:r.expires_on,attachmentName:r.attachment_name||'',attachmentId:r.attachment_id||''}));
-  if(module==='companyDocs')return db.prepare(`SELECT d.id,d.payload,d.expires_on,
-    (SELECT a.original_name FROM attachments a WHERE a.organization_document_id=d.id ORDER BY a.created_at DESC LIMIT 1) AS attachment_name,
-    (SELECT a.id FROM attachments a WHERE a.organization_document_id=d.id ORDER BY a.created_at DESC LIMIT 1) AS attachment_id
-    FROM organization_documents d WHERE d.organization_id=? ORDER BY d.expires_on`).all(orgId)
-    .map(r=>({...parsePayload(r.payload),id:r.id,expiresOn:r.expires_on,attachmentName:r.attachment_name||'',attachmentId:r.attachment_id||''}));
-  return db.prepare('SELECT id,payload FROM app_records WHERE organization_id=? AND module=? ORDER BY updated_at DESC').all(orgId,module).map(r=>({...parsePayload(r.payload),id:r.id}));
+function findModulePage(orgId,module,{q='',status='',limit=50,offset=0}={}){
+  const conditions=[];const values=[];const needle=q?`%${q}%`:'';
+  if(module==='employees'){
+    conditions.push('organization_id=?');values.push(orgId);
+    if(q){conditions.push('(full_name LIKE ? OR employee_number LIKE ?)');values.push(needle,needle);}
+    if(status){conditions.push("json_extract(payload,'$.status')=?");values.push(status);}
+    const where=conditions.join(' AND ');const total=db.prepare(`SELECT COUNT(*) AS total FROM employees WHERE ${where}`).get(...values).total;
+    const items=db.prepare(`SELECT id,payload FROM employees WHERE ${where} ORDER BY full_name,id LIMIT ? OFFSET ?`).all(...values,limit,offset).map(r=>({...parsePayload(r.payload),id:r.id}));
+    return {items,total};
+  }
+  if(module==='employeeDocs'||module==='companyDocs'){
+    const employee=module==='employeeDocs';const alias=employee?'d':'d';
+    const from=employee?'employee_documents d JOIN employees e ON e.id=d.employee_id':'organization_documents d';
+    conditions.push('d.organization_id=?');values.push(orgId);
+    if(q){conditions.push(employee?'(d.payload LIKE ? OR e.full_name LIKE ? OR e.employee_number LIKE ?)':'(d.payload LIKE ?)');values.push(...(employee?[needle,needle,needle]:[needle]));}
+    if(status==='expired')conditions.push("d.expires_on < date('now')");
+    else if(status==='expiring')conditions.push("d.expires_on BETWEEN date('now') AND date('now','+45 days')");
+    else if(status==='valid')conditions.push("d.expires_on > date('now','+45 days')");
+    const where=conditions.join(' AND ');const total=db.prepare(`SELECT COUNT(*) AS total FROM ${from} WHERE ${where}`).get(...values).total;
+    const items=employee?db.prepare(`SELECT d.id,d.payload,d.expires_on,e.full_name,e.employee_number,
+      (SELECT a.original_name FROM attachments a WHERE a.employee_document_id=d.id ORDER BY a.created_at DESC LIMIT 1) AS attachment_name,
+      (SELECT a.id FROM attachments a WHERE a.employee_document_id=d.id ORDER BY a.created_at DESC LIMIT 1) AS attachment_id
+      FROM ${from} WHERE ${where} ORDER BY e.full_name,d.expires_on,d.id LIMIT ? OFFSET ?`).all(...values,limit,offset)
+      .map(r=>({...parsePayload(r.payload),id:r.id,employeeName:r.full_name,employeeNumber:r.employee_number,expiresOn:r.expires_on,attachmentName:r.attachment_name||'',attachmentId:r.attachment_id||''}))
+      :db.prepare(`SELECT d.id,d.payload,d.expires_on,
+      (SELECT a.original_name FROM attachments a WHERE a.organization_document_id=d.id ORDER BY a.created_at DESC LIMIT 1) AS attachment_name,
+      (SELECT a.id FROM attachments a WHERE a.organization_document_id=d.id ORDER BY a.created_at DESC LIMIT 1) AS attachment_id
+      FROM ${from} WHERE ${where} ORDER BY d.expires_on,d.id LIMIT ? OFFSET ?`).all(...values,limit,offset)
+      .map(r=>({...parsePayload(r.payload),id:r.id,expiresOn:r.expires_on,attachmentName:r.attachment_name||'',attachmentId:r.attachment_id||''}));
+    return {items,total};
+  }
+  conditions.push('organization_id=?','module=?');values.push(orgId,module);
+  if(q){conditions.push('payload LIKE ?');values.push(needle);}
+  if(status){conditions.push("json_extract(payload,'$.status')=?");values.push(status);}
+  const where=conditions.join(' AND ');const total=db.prepare(`SELECT COUNT(*) AS total FROM app_records WHERE ${where}`).get(...values).total;
+  const items=db.prepare(`SELECT id,payload FROM app_records WHERE ${where} ORDER BY updated_at DESC,id DESC LIMIT ? OFFSET ?`).all(...values,limit,offset).map(r=>({...parsePayload(r.payload),id:r.id}));
+  return {items,total};
+}
+function moduleRecordExists(orgId,module,id){
+  if(module==='employees')return !!db.prepare('SELECT 1 FROM employees WHERE id=? AND organization_id=?').get(id,orgId);
+  if(module==='employeeDocs')return !!db.prepare('SELECT 1 FROM employee_documents WHERE id=? AND organization_id=?').get(id,orgId);
+  if(module==='companyDocs')return !!db.prepare('SELECT 1 FROM organization_documents WHERE id=? AND organization_id=?').get(id,orgId);
+  return !!db.prepare('SELECT 1 FROM app_records WHERE id=? AND organization_id=? AND module=?').get(id,orgId,module);
 }
 function validateRecord(module,record){
   if(!record||typeof record!=='object'||Array.isArray(record))return 'Record must be an object';
@@ -95,6 +125,37 @@ function saveModuleRecord(user,module,id,record,created=false){
 
 app.get('/api/health',(_req,res)=>res.json({ok:true,service:'rakeza-local-api',version:1}));
 app.get('/api/setup/status',(_req,res)=>res.json({initialized:!!db.prepare('SELECT id FROM users LIMIT 1').get()}));
+app.get('/api/v1/overview',requireAuth,(req,res)=>{
+  try{
+    const orgId=req.user.organization_id;
+    const people=db.prepare('SELECT COUNT(*) AS total FROM employees WHERE organization_id=?').get(orgId).total;
+    const metrics=db.prepare(`SELECT
+      SUM(CASE WHEN module='attendance' AND json_extract(payload,'$.status') IN ('حاضر','عن بُعد') THEN 1 ELSE 0 END) AS present_count,
+      SUM(CASE WHEN module='leaves' AND json_extract(payload,'$.status')='قيد المراجعة' THEN 1 ELSE 0 END) AS pending_leaves,
+      SUM(CASE WHEN module='payroll' THEN CAST(json_extract(payload,'$.salary') AS REAL) ELSE 0 END) AS payroll_total,
+      SUM(CASE WHEN module='absence' THEN CAST(json_extract(payload,'$.days') AS REAL) ELSE 0 END) AS absence_days,
+      SUM(CASE WHEN module='leaves' THEN CAST(json_extract(payload,'$.days') AS REAL) ELSE 0 END) AS leave_days,
+      SUM(CASE WHEN module='advances' THEN CAST(json_extract(payload,'$.amount') AS REAL) ELSE 0 END) AS advances_total,
+      SUM(CASE WHEN module='contracts' AND json_extract(payload,'$.status')='منتهي' THEN 1 ELSE 0 END) AS expired_contracts,
+      AVG(CASE WHEN module='payroll' THEN CAST(json_extract(payload,'$.salary') AS REAL) END) AS average_salary
+      FROM app_records WHERE organization_id=?`).get(orgId);
+    const bandCounts=db.prepare(`SELECT
+      SUM(CASE WHEN expires_on BETWEEN date('now') AND date('now','+7 days') THEN 1 ELSE 0 END) AS days_7,
+      SUM(CASE WHEN expires_on>date('now','+7 days') AND expires_on<=date('now','+15 days') THEN 1 ELSE 0 END) AS days_15,
+      SUM(CASE WHEN expires_on>date('now','+15 days') AND expires_on<=date('now','+30 days') THEN 1 ELSE 0 END) AS days_30,
+      SUM(CASE WHEN expires_on>date('now','+30 days') AND expires_on<=date('now','+45 days') THEN 1 ELSE 0 END) AS days_45
+      FROM (SELECT expires_on FROM organization_documents WHERE organization_id=? UNION ALL SELECT expires_on FROM employee_documents WHERE organization_id=?)`).get(orgId,orgId);
+    const dueDocuments=db.prepare(`SELECT id,title AS name,document_type AS documentType,issuing_authority AS authority,NULL AS employeeName,expires_on AS expiresOn,'companyDocs' AS module,
+      CAST(julianday(expires_on)-julianday(date('now')) AS INTEGER) AS daysRemaining FROM organization_documents WHERE organization_id=? AND expires_on BETWEEN date('now') AND date('now','+45 days')
+      UNION ALL SELECT d.id,d.document_type,d.document_type,NULL,e.full_name,d.expires_on,'employeeDocs',CAST(julianday(d.expires_on)-julianday(date('now')) AS INTEGER)
+      FROM employee_documents d JOIN employees e ON e.id=d.employee_id WHERE d.organization_id=? AND d.expires_on BETWEEN date('now') AND date('now','+45 days') ORDER BY expiresOn LIMIT 5`).all(orgId,orgId);
+    const expiredDocuments=db.prepare(`SELECT id,title AS name,document_type AS documentType,issuing_authority AS authority,NULL AS employeeName,expires_on AS expiresOn,'companyDocs' AS module,
+      CAST(julianday(expires_on)-julianday(date('now')) AS INTEGER) AS daysRemaining FROM organization_documents WHERE organization_id=? AND expires_on<date('now')
+      UNION ALL SELECT d.id,d.document_type,d.document_type,NULL,e.full_name,d.expires_on,'employeeDocs',CAST(julianday(d.expires_on)-julianday(date('now')) AS INTEGER)
+      FROM employee_documents d JOIN employees e ON e.id=d.employee_id WHERE d.organization_id=? AND d.expires_on<date('now') ORDER BY expiresOn DESC LIMIT 3`).all(orgId,orgId);
+    res.json({employeeCount:people,presentCount:metrics.present_count||0,pendingLeaves:metrics.pending_leaves||0,payrollTotal:metrics.payroll_total||0,absenceDays:metrics.absence_days||0,totalLeaveDays:metrics.leave_days||0,advancesTotal:metrics.advances_total||0,expiredContracts:metrics.expired_contracts||0,averageSalary:Math.round(metrics.average_salary||0),expiryBands:{7:bandCounts.days_7||0,15:bandCounts.days_15||0,30:bandCounts.days_30||0,45:bandCounts.days_45||0},dueDocuments,expiredDocuments});
+  }catch(error){logSafeError(res,error);}
+});
 app.post('/api/setup/first-admin',async(req,res)=>{
   try{
     const peer=(req.socket.remoteAddress||'').replace(/^::ffff:/,'');
@@ -137,7 +198,8 @@ app.patch('/api/admin/users/:id',requireAuth,requireRole('admin'),(req,res)=>{
 });
 app.get('/api/v1/modules/:module',requireAuth,(req,res)=>{
   const {module}=req.params;if(!allowedModules.has(module)&&!['employeeDocs','companyDocs'].includes(module))return res.status(404).json({code:'MODULE_NOT_FOUND',message:'Module not found'});
-  try{let rows=findModuleRows(req.user.organization_id,module);const q=String(req.query.q||'').toLowerCase();if(q)rows=rows.filter(row=>Object.values(row).some(value=>String(value).toLowerCase().includes(q)));res.json({items:rows,total:rows.length});}catch(error){logSafeError(res,error);}
+  const page=Math.max(1,Number(req.query.page)||1),pageSize=Math.min(200,Math.max(1,Number(req.query.pageSize)||50));
+  try{const result=findModulePage(req.user.organization_id,module,{q:String(req.query.q||'').trim(),status:String(req.query.status||''),limit:pageSize,offset:(page-1)*pageSize});res.json({...result,page,pageSize,pageCount:Math.ceil(result.total/pageSize)});}catch(error){logSafeError(res,error);}
 });
 app.post('/api/v1/modules/:module',requireAuth,requireRole(...writeRoles),(req,res)=>{
   const {module}=req.params;if(!allowedModules.has(module)&&!['employeeDocs','companyDocs'].includes(module))return res.status(404).json({code:'MODULE_NOT_FOUND',message:'Module not found'});
@@ -147,7 +209,7 @@ app.post('/api/v1/modules/:module',requireAuth,requireRole(...writeRoles),(req,r
 app.put('/api/v1/modules/:module/:id',requireAuth,requireRole(...writeRoles),(req,res)=>{
   const {module,id}=req.params;if(!allowedModules.has(module)&&!['employeeDocs','companyDocs'].includes(module))return res.status(404).json({code:'MODULE_NOT_FOUND',message:'Module not found'});
   const issue=validateRecord(module,req.body);if(issue)return res.status(422).json({code:'VALIDATION_ERROR',message:issue});
-  try{const existing=findModuleRows(req.user.organization_id,module).some(row=>row.id===id);if(!existing)return res.status(404).json({code:'NOT_FOUND',message:'Record not found'});const item=saveModuleRecord(req.user,module,id,req.body);res.json(item);}catch(error){if(error.status)return res.status(error.status).json({code:error.code,message:error.message});logSafeError(res,error);}
+  try{if(!moduleRecordExists(req.user.organization_id,module,id))return res.status(404).json({code:'NOT_FOUND',message:'Record not found'});const item=saveModuleRecord(req.user,module,id,req.body);res.json(item);}catch(error){if(error.status)return res.status(error.status).json({code:error.code,message:error.message});logSafeError(res,error);}
 });
 app.delete('/api/v1/modules/:module/:id',requireAuth,requireRole(...writeRoles),(req,res)=>{
   const {module,id}=req.params;if(!allowedModules.has(module)&&!['employeeDocs','companyDocs'].includes(module))return res.status(404).json({code:'MODULE_NOT_FOUND',message:'Module not found'});
@@ -214,13 +276,16 @@ app.use((error,_req,res,_next)=>{if(error.type==='entity.too.large')return res.s
 const isHost=process.env.RAKEZA_HOST_MODE==='host';
 const host=isHost?'0.0.0.0':'127.0.0.1';
 const port=Number(process.env.RAKEZA_PORT||47820);
+const localSocket=process.env.RAKEZA_SOCKET;
 let server;
-if(isHost){
+if(localSocket){
+  server=require('node:http').createServer(app);
+}else if(isHost){
   if(!process.env.RAKEZA_TLS_CERT||!process.env.RAKEZA_TLS_KEY)throw new Error('Host mode requires a TLS certificate and private key.');
   try{server=https.createServer({cert:fs.readFileSync(process.env.RAKEZA_TLS_CERT),key:fs.readFileSync(process.env.RAKEZA_TLS_KEY)},app);}
   catch(error){throw new Error(`Could not load host TLS files: ${error.message}`);}
 }else server=require('node:http').createServer(app);
-server.listen(port,host,()=>console.log(`Rakeza local API listening on ${isHost?'https':'http'}://${host}:${port}; data: ${dataDir}`));
+server.listen(localSocket||port,...(localSocket?[]:[host]),()=>console.log(`Rakeza local API listening on ${localSocket||`${isHost?'https':'http'}://${host}:${port}`}; data: ${dataDir}`));
 server.on('error',error=>console.error('Rakeza local API could not listen:',error.message));
 let closing;
 function closeServer(){if(closing)return closing;closing=new Promise(resolve=>server.close(()=>{db.close();resolve();}));return closing;}
