@@ -1,0 +1,14 @@
+{
+  "name": "rakeza-hr-backend",
+  "private": true,
+  "type": "commonjs",
+  "main": "src/server.cjs",
+  "scripts": { "dev": "node --watch src/server.cjs", "start": "node src/server.cjs" },
+  "dependencies": {
+    "bcryptjs": "latest",
+    "better-sqlite3": "latest",
+    "express": "latest",
+    "express-rate-limit": "latest",
+    "helmet": "latest"
+  }
+}

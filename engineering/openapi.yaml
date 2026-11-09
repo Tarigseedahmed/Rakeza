@@ -1,0 +1,227 @@
+openapi: 3.0.3
+info:
+  title: Rakeza HR API
+  version: 1.0.0
+  description: Initial REST contract for dashboard and core HR workflows.
+servers:
+  - url: https://api.example.com/api/v1
+security:
+  - sessionCookie: []
+paths:
+  /dashboard/summary:
+    get:
+      summary: Dashboard KPIs
+      responses:
+        '200':
+          description: Summary values visible to the caller
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DashboardSummary' }
+              example:
+                generatedAt: '2026-11-09T12:00:00Z'
+                metrics:
+                  - { key: employees.total, label: إجمالي الموظفين, value: 30, unit: people, trend: stable }
+                  - { key: attendance.absenceDays, label: عدد أيام الغياب, value: 56, unit: days, trend: down }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/ServerError' }
+  /modules:
+    get:
+      summary: List authorized dashboard modules
+      responses:
+        '200':
+          description: Ordered modules
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/Module' } }
+              example:
+                items: [{ key: employees, title: بيانات الموظفين, href: /employees, colorToken: employees }]
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /employees:
+    get:
+      summary: Search employees
+      parameters:
+        - { in: query, name: q, schema: { type: string, maxLength: 100 } }
+        - { in: query, name: status, schema: { type: string, enum: [active, on_leave, terminated] } }
+        - { in: query, name: page, schema: { type: integer, minimum: 1, default: 1 } }
+        - { in: query, name: pageSize, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: Paginated employees
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/Employee' } }
+                  page: { type: integer }
+                  pageSize: { type: integer }
+                  total: { type: integer }
+              example:
+                items: [{ id: '6d2286a2-d40c-4aaf-b658-a159c59128cc', employeeNumber: 'RK-001', fullName: 'سارة محمد', status: active }]
+                page: 1
+                pageSize: 25
+                total: 1
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      summary: Create employee
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EmployeeInput' }
+            example: { employeeNumber: 'RK-042', firstName: منى, lastName: علي, hireDate: '2026-11-01', department: الموارد البشرية }
+      responses:
+        '201':
+          description: Employee created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Employee' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '409': { description: Employee number already exists }
+  /employees/{employeeId}:
+    parameters:
+      - { in: path, name: employeeId, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: Get employee
+      responses:
+        '200': { description: Employee, content: { application/json: { schema: { $ref: '#/components/schemas/Employee' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      summary: Update employee fields
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EmployeeInput' }
+      responses:
+        '200': { description: Updated employee, content: { application/json: { schema: { $ref: '#/components/schemas/Employee' } } } }
+        '409': { description: Concurrent update conflict }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /leave-requests:
+    post:
+      summary: Submit leave request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [startsOn, endsOn, leaveType]
+              properties:
+                startsOn: { type: string, format: date }
+                endsOn: { type: string, format: date }
+                leaveType: { type: string, maxLength: 40 }
+                reason: { type: string, maxLength: 1000 }
+      responses:
+        '201': { description: Request submitted }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /leave-requests/{requestId}/decision:
+    post:
+      summary: Approve or reject leave request
+      parameters:
+        - { in: path, name: requestId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [approved, rejected] }
+                comment: { type: string, maxLength: 500 }
+      responses:
+        '200': { description: Decision recorded }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Request is no longer pending }
+  /audit-events:
+    get:
+      summary: Read audit events (restricted)
+      parameters:
+        - { in: query, name: from, schema: { type: string, format: date-time } }
+        - { in: query, name: page, schema: { type: integer, minimum: 1, default: 1 } }
+      responses:
+        '200': { description: Authorized audit events }
+        '403': { $ref: '#/components/responses/Forbidden' }
+components:
+  securitySchemes:
+    sessionCookie: { type: apiKey, in: cookie, name: rakeza_session }
+  schemas:
+    DashboardSummary:
+      type: object
+      required: [generatedAt, metrics]
+      properties:
+        generatedAt: { type: string, format: date-time }
+        metrics: { type: array, items: { $ref: '#/components/schemas/Metric' } }
+    Metric:
+      type: object
+      required: [key, label, value, unit]
+      properties:
+        key: { type: string }
+        label: { type: string }
+        value: { oneOf: [{ type: number }, { type: string, nullable: true }] }
+        unit: { type: string }
+        trend: { type: string, enum: [up, down, stable, unknown] }
+        changePercent: { type: number, nullable: true }
+    Module:
+      type: object
+      required: [key, title, href, colorToken]
+      properties:
+        key: { type: string }
+        title: { type: string }
+        href: { type: string }
+        colorToken: { type: string }
+        icon: { type: string }
+    EmployeeInput:
+      type: object
+      properties:
+        employeeNumber: { type: string, maxLength: 30 }
+        firstName: { type: string, maxLength: 100 }
+        lastName: { type: string, maxLength: 100 }
+        email: { type: string, format: email, nullable: true }
+        department: { type: string, maxLength: 100, nullable: true }
+        hireDate: { type: string, format: date }
+    Employee:
+      allOf:
+        - $ref: '#/components/schemas/EmployeeInput'
+        - type: object
+          required: [id, status]
+          properties:
+            id: { type: string, format: uuid }
+            fullName: { type: string }
+            status: { type: string, enum: [active, on_leave, terminated] }
+    ApiError:
+      type: object
+      required: [code, message, traceId]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        details: { type: array, items: { type: object, additionalProperties: true } }
+        traceId: { type: string }
+  responses:
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+          example: { code: UNAUTHENTICATED, message: انتهت الجلسة، يرجى تسجيل الدخول, traceId: tr_123 }
+    Forbidden:
+      description: Action not permitted
+      content: { application/json: { schema: { $ref: '#/components/schemas/ApiError' } } }
+    NotFound:
+      description: Resource not found
+      content: { application/json: { schema: { $ref: '#/components/schemas/ApiError' } } }
+    ValidationError:
+      description: Input failed validation
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+          example: { code: VALIDATION_ERROR, message: راجع الحقول المدخلة, details: [{ field: employeeNumber, issue: مطلوب }], traceId: tr_124 }
+    ServerError:
+      description: Unexpected server error
+      content: { application/json: { schema: { $ref: '#/components/schemas/ApiError' } } }

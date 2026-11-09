@@ -1,0 +1,24 @@
+{
+  "name": "rakeza-hr-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "main": "main.cjs",
+  "scripts": {
+    "dev": "wait-on tcp:5173 && electron . --dev",
+    "package": "electron-builder --win nsis"
+  },
+  "dependencies": { "rakeza-hr-backend": "*" },
+  "devDependencies": { "electron": "latest", "electron-builder": "latest", "wait-on": "latest" },
+  "build": {
+    "appId": "com.rakeza.hr",
+    "productName": "Rakeza HR",
+    "asar": true,
+    "npmRebuild": false,
+    "directories": { "output": "../../release" },
+    "files": ["main.cjs", "preload.cjs", "assets/**/*", "node_modules/**/*"],
+    "extraResources": [{ "from": "../frontend-scaffold/dist", "to": "app" }],
+    "asarUnpack": ["**/node_modules/better-sqlite3/**"],
+    "win": { "icon": "assets/rakeza.ico", "target": [{ "target": "nsis", "arch": ["x64"] }] },
+    "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true, "createStartMenuShortcut": true }
+  }
+}

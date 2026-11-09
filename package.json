@@ -1,0 +1,13 @@
+{
+  "name": "rakeza-hr",
+  "private": true,
+  "workspaces": ["engineering/frontend-scaffold", "engineering/backend", "engineering/desktop"],
+  "scripts": {
+    "dev": "npm run dev --workspace rakeza-hr-web",
+    "dev:desktop": "concurrently -k -n web,desktop \"npm run dev --workspace rakeza-hr-web\" \"npm run dev --workspace rakeza-hr-desktop\"",
+    "dev:api": "npm run dev --workspace rakeza-hr-backend",
+    "build": "npm run build --workspace rakeza-hr-web",
+    "package:desktop": "npm run build --workspace rakeza-hr-web && npm run package --workspace rakeza-hr-desktop"
+  },
+  "devDependencies": { "concurrently": "latest", "wait-on": "latest" }
+}

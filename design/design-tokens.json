@@ -1,0 +1,24 @@
+{
+  "$schema": "https://design-tokens.github.io/community-group/format/",
+  "name": "Rakeza HR",
+  "direction": "rtl",
+  "color": {
+    "brand": { "navy": "#1E3A8A", "navyDark": "#142B49", "green": "#10B981", "greenDark": "#4F873D" },
+    "surface": { "page": "#F8FAFC", "card": "#FFFFFF", "raised": "#F1F5F9", "border": "#D7DEE5" },
+    "text": { "primary": "#17212B", "secondary": "#64748B", "onColor": "#FFFFFF" },
+    "status": { "success": "#168354", "warning": "#F97316", "danger": "#B42318", "info": "#2876B5", "leave": "#7433A2" },
+    "module": { "employees": "#142B49", "attendance": "#568C3F", "absence": "#B80E14", "advances": "#8B8B8B", "payroll": "#C55D13", "leaves": "#7433A2", "settings": "#568C3F", "analytics": "#2876B5", "contracts": "#873333" }
+  },
+  "typography": {
+    "fontFamily": { "arabic": "Tajawal, Cairo, sans-serif", "latin": "Inter, Montserrat, sans-serif" },
+    "size": { "xs": "12px", "sm": "14px", "md": "16px", "lg": "20px", "xl": "24px", "display": "32px" },
+    "weight": { "regular": 400, "medium": 500, "semibold": 600, "bold": 700, "extrabold": 800 },
+    "lineHeight": { "tight": 1.25, "normal": 1.5, "relaxed": 1.65 }
+  },
+  "spacing": { "1": "4px", "2": "8px", "3": "12px", "4": "16px", "6": "24px", "8": "32px", "12": "48px" },
+  "radius": { "sm": "6px", "card": "10px", "panel": "14px", "pill": "999px" },
+  "shadow": { "card": "0 2px 8px rgba(15, 23, 42, .14)", "raised": "0 6px 18px rgba(15, 23, 42, .16)" },
+  "grid": { "desktopColumns": 3, "tabletColumns": 2, "mobileColumns": 1, "gap": "24px", "desktopMaxWidth": "1200px" },
+  "icon": { "style": "outlined", "size": "24px", "strokeWidth": 1.8, "colorOnModule": "#FFFFFF" },
+  "motion": { "fast": "120ms", "standard": "180ms", "ease": "cubic-bezier(.2,.7,.2,1)" }
+}
