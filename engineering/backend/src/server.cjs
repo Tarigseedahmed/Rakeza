@@ -8,6 +8,7 @@ const helmet = require('helmet');
 const bcrypt = require('bcryptjs');
 const { rateLimit } = require('express-rate-limit');
 const { openDatabase } = require('./database.cjs');
+const saudiRegulations = require('./regulations/saudi.cjs');
 
 const dataDir = process.env.RAKEZA_DATA_DIR || path.join(os.homedir(), 'AppData', 'Local', 'Rakeza HR', 'data');
 const documentDir = path.join(dataDir, 'documents');
@@ -225,6 +226,26 @@ app.post('/api/auth/logout',requireAuth,(req,res)=>{db.prepare('DELETE FROM sess
 app.get('/api/organization/settings',requireAuth,(req,res)=>{
   const settings=db.prepare('SELECT country_code AS countryCode,currency_code AS currencyCode,locale,timezone,date_format AS dateFormat,week_start AS weekStart,weekend_days AS weekendDays FROM organization_preferences WHERE organization_id=?').get(req.user.organization_id);
   res.json({...settings,weekendDays:JSON.parse(settings.weekendDays),countries:countryProfiles});
+});
+app.get('/api/compliance/profile',requireAuth,(req,res)=>{
+  const setting=db.prepare('SELECT country_code FROM organization_preferences WHERE organization_id=?').get(req.user.organization_id);
+  const countryCode=setting?.country_code||'SA';
+  res.json({countryCode,asOf:new Date().toISOString().slice(0,10),status:countryCode==='SA'?'advisory_implementation':'regional_profile_only',rules:countryCode==='SA'?saudiRegulations.rules:[],sources:countryCode==='SA'?saudiRegulations.sources:[]});
+});
+app.post('/api/compliance/saudi/estimate',requireAuth,requirePermission('payroll','read'),(req,res)=>{
+  const setting=db.prepare('SELECT country_code FROM organization_preferences WHERE organization_id=?').get(req.user.organization_id);
+  if(setting?.country_code!=='SA')return res.status(409).json({code:'COUNTRY_MISMATCH',message:'Saudi rule estimates are available only when the organization country is Saudi Arabia'});
+  try{
+    const {kind,...input}=req.body||{};
+    let result;
+    if(kind==='annualLeave')result=saudiRegulations.minimumAnnualLeave(input);
+    else if(kind==='endOfService')result=saudiRegulations.estimateEndOfService(input);
+    else if(kind==='overtime')result=saudiRegulations.estimateOvertime(input);
+    else if(kind==='socialInsurance')result=saudiRegulations.estimateSocialInsurance(input);
+    else return res.status(422).json({code:'INVALID_ESTIMATE_KIND',message:'Choose a supported estimate type'});
+    audit(req.user,'compliance.estimate.created',kind,result.ruleId||null,{requiresHumanReview:true});
+    return res.json({countryCode:'SA',currencyCode:'SAR',advisory:true,...result});
+  }catch(error){if(error.status===422)return res.status(422).json({code:'INVALID_ESTIMATE_INPUT',message:error.message});return logSafeError(res,error);}
 });
 app.put('/api/organization/settings',requireAuth,requireRole('admin'),(req,res)=>{
   const {countryCode,currencyCode}=req.body||{};const profile=countryProfiles.find(country=>country.code===countryCode);
