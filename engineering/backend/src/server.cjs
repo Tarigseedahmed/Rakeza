@@ -17,7 +17,24 @@ fs.mkdirSync(backupDir, { recursive: true });
 const db = openDatabase(dataDir);
 const app = express();
 const allowedModules = new Set(['employees','attendance','absence','leaves','payroll','advances','contracts','files','reports']);
-const writeRoles = new Set(['admin','hr']);
+const documentModules = new Set(['employeeDocs','companyDocs']);
+const permissionModules = [...allowedModules,...documentModules];
+const permissionActions = ['read','create','update','delete','export'];
+const roles = ['admin','hr','manager','viewer'];
+const countryProfiles = [
+  {code:'SA',nameAr:'السعودية',nameEn:'Saudi Arabia',currency:'SAR',locale:'ar-SA',timezone:'Asia/Riyadh',dateFormat:'dd/MM/yyyy',weekStart:0,weekendDays:[5,6]},
+  {code:'AE',nameAr:'الإمارات العربية المتحدة',nameEn:'United Arab Emirates',currency:'AED',locale:'ar-AE',timezone:'Asia/Dubai',dateFormat:'dd/MM/yyyy',weekStart:1,weekendDays:[6,0]},
+  {code:'BH',nameAr:'البحرين',nameEn:'Bahrain',currency:'BHD',locale:'ar-BH',timezone:'Asia/Bahrain',dateFormat:'dd/MM/yyyy',weekStart:0,weekendDays:[5,6]},
+  {code:'KW',nameAr:'الكويت',nameEn:'Kuwait',currency:'KWD',locale:'ar-KW',timezone:'Asia/Kuwait',dateFormat:'dd/MM/yyyy',weekStart:0,weekendDays:[5,6]},
+  {code:'QA',nameAr:'قطر',nameEn:'Qatar',currency:'QAR',locale:'ar-QA',timezone:'Asia/Qatar',dateFormat:'dd/MM/yyyy',weekStart:0,weekendDays:[5,6]},
+  {code:'OM',nameAr:'عُمان',nameEn:'Oman',currency:'OMR',locale:'ar-OM',timezone:'Asia/Muscat',dateFormat:'dd/MM/yyyy',weekStart:0,weekendDays:[5,6]},
+  {code:'EG',nameAr:'مصر',nameEn:'Egypt',currency:'EGP',locale:'ar-EG',timezone:'Africa/Cairo',dateFormat:'dd/MM/yyyy',weekStart:6,weekendDays:[5,6]},
+  {code:'JO',nameAr:'الأردن',nameEn:'Jordan',currency:'JOD',locale:'ar-JO',timezone:'Asia/Amman',dateFormat:'dd/MM/yyyy',weekStart:0,weekendDays:[5,6]},
+  {code:'IQ',nameAr:'العراق',nameEn:'Iraq',currency:'IQD',locale:'ar-IQ',timezone:'Asia/Baghdad',dateFormat:'dd/MM/yyyy',weekStart:0,weekendDays:[5,6]},
+  {code:'MA',nameAr:'المغرب',nameEn:'Morocco',currency:'MAD',locale:'ar-MA',timezone:'Africa/Casablanca',dateFormat:'dd/MM/yyyy',weekStart:1,weekendDays:[6,0]},
+  {code:'DZ',nameAr:'الجزائر',nameEn:'Algeria',currency:'DZD',locale:'ar-DZ',timezone:'Africa/Algiers',dateFormat:'dd/MM/yyyy',weekStart:0,weekendDays:[5,6]},
+  {code:'TN',nameAr:'تونس',nameEn:'Tunisia',currency:'TND',locale:'ar-TN',timezone:'Africa/Tunis',dateFormat:'dd/MM/yyyy',weekStart:1,weekendDays:[6,0]},
+];
 
 app.disable('x-powered-by');
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' }, contentSecurityPolicy: false }));
@@ -45,8 +62,27 @@ function requireAuth(req,res,next){
   req.user=session;req.sessionTokenHash=hashToken(token);next();
 }
 function requireRole(...roles){return (req,res,next)=>roles.includes(req.user.role)?next():res.status(403).json({code:'FORBIDDEN',message:'You do not have permission for this action'});}
+function hasPermission(user,module,action){if(user.role==='admin')return true;return !!db.prepare('SELECT enabled FROM role_permissions WHERE organization_id=? AND role_key=? AND module_key=? AND action_key=?').get(user.organization_id,user.role,module,action)?.enabled;}
+function getRolePermissions(organizationId,role){return Object.fromEntries(permissionModules.map(module=>[module,Object.fromEntries(permissionActions.map(action=>[action,role==='admin'||!!db.prepare('SELECT enabled FROM role_permissions WHERE organization_id=? AND role_key=? AND module_key=? AND action_key=?').get(organizationId,role,module,action)?.enabled]))]));}
+function requirePermission(module,action){return (req,res,next)=>{
+  const moduleKey=typeof module==='function'?module(req):module;
+  try{return hasPermission(req.user,moduleKey,action)?next():res.status(403).json({code:'FORBIDDEN',message:'Your role does not have permission to perform this action'});}catch(error){return logSafeError(res,error);}
+};}
+function requireAnyPermission(moduleKeys,action){return (req,res,next)=>{if(req.user.role==='admin')return next();const placeholders=moduleKeys.map(()=>'?').join(',');try{const result=db.prepare(`SELECT 1 FROM role_permissions WHERE organization_id=? AND role_key=? AND action_key=? AND enabled=1 AND module_key IN (${placeholders}) LIMIT 1`).get(req.user.organization_id,req.user.role,action,...moduleKeys);return result?next():res.status(403).json({code:'FORBIDDEN',message:'Your role does not have permission to perform this action'});}catch(error){return logSafeError(res,error);}};}
+function requireAttachmentPermission(action){return (req,res,next)=>{if(req.user.role==='admin')return next();try{let moduleKey=req.params.module;if(!moduleKey){const item=db.prepare('SELECT employee_document_id,organization_document_id FROM attachments WHERE id=? AND organization_id=?').get(req.params.id,req.user.organization_id);if(!item)return res.status(404).json({code:'NOT_FOUND',message:'Attachment not found'});moduleKey=item.employee_document_id?'employeeDocs':'companyDocs';}return requirePermission(moduleKey,action)(req,res,next);}catch(error){return logSafeError(res,error);}};}
 function logSafeError(res,error){console.error(error);return res.status(500).json({code:'INTERNAL_ERROR',message:'The request could not be completed'});}
 function parsePayload(value){try{return JSON.parse(value||'{}');}catch{return {};}}
+function initializeOrganizationDefaults(organizationId){
+  db.prepare('INSERT OR IGNORE INTO organization_preferences(organization_id) VALUES(?)').run(organizationId);
+  const defaults={
+    admin:new Set(permissionModules.flatMap(module=>permissionActions.map(action=>`${module}:${action}`))),
+    hr:new Set(permissionModules.filter(module=>!['payroll','advances'].includes(module)).flatMap(module=>permissionActions.map(action=>`${module}:${action}`))),
+    manager:new Set(permissionModules.filter(module=>!['payroll','advances'].includes(module)).flatMap(module=>['read','create','update','export'].map(action=>`${module}:${action}`))),
+    viewer:new Set(['employees','attendance','absence','leaves','reports'].flatMap(module=>['read','export'].map(action=>`${module}:${action}`))),
+  };
+  const add=db.prepare('INSERT OR IGNORE INTO role_permissions(organization_id,role_key,module_key,action_key,enabled) VALUES(?,?,?,?,?)');
+  for(const role of roles)for(const module of permissionModules)for(const action of permissionActions)add.run(organizationId,role,module,action,defaults[role].has(`${module}:${action}`)?1:0);
+}
 function findModulePage(orgId,module,{q='',status='',limit=50,offset=0}={}){
   const conditions=[];const values=[];const needle=q?`%${q}%`:'';
   if(module==='employees'){
@@ -139,21 +175,28 @@ app.get('/api/v1/overview',requireAuth,(req,res)=>{
       SUM(CASE WHEN module='contracts' AND json_extract(payload,'$.status')='منتهي' THEN 1 ELSE 0 END) AS expired_contracts,
       AVG(CASE WHEN module='payroll' THEN CAST(json_extract(payload,'$.salary') AS REAL) END) AS average_salary
       FROM app_records WHERE organization_id=?`).get(orgId);
-    const bandCounts=db.prepare(`SELECT
+    const canCompanyDocs=hasPermission(req.user,'companyDocs','read'),canEmployeeDocs=hasPermission(req.user,'employeeDocs','read');
+    const hasDocuments=canCompanyDocs||canEmployeeDocs;
+    const accessibleDocumentSources=[
+      ...(canCompanyDocs?[{sql:'SELECT expires_on FROM organization_documents WHERE organization_id=?',orgId}]:[]),
+      ...(canEmployeeDocs?[{sql:'SELECT expires_on FROM employee_documents WHERE organization_id=?',orgId}]:[])
+    ];
+    const expiryUnion=accessibleDocumentSources.map(source=>source.sql).join(' UNION ALL ');
+    const bandCounts=hasDocuments?db.prepare(`SELECT
       SUM(CASE WHEN expires_on BETWEEN date('now') AND date('now','+7 days') THEN 1 ELSE 0 END) AS days_7,
       SUM(CASE WHEN expires_on>date('now','+7 days') AND expires_on<=date('now','+15 days') THEN 1 ELSE 0 END) AS days_15,
       SUM(CASE WHEN expires_on>date('now','+15 days') AND expires_on<=date('now','+30 days') THEN 1 ELSE 0 END) AS days_30,
       SUM(CASE WHEN expires_on>date('now','+30 days') AND expires_on<=date('now','+45 days') THEN 1 ELSE 0 END) AS days_45
-      FROM (SELECT expires_on FROM organization_documents WHERE organization_id=? UNION ALL SELECT expires_on FROM employee_documents WHERE organization_id=?)`).get(orgId,orgId);
-    const dueDocuments=db.prepare(`SELECT id,title AS name,document_type AS documentType,issuing_authority AS authority,NULL AS employeeName,expires_on AS expiresOn,'companyDocs' AS module,
-      CAST(julianday(expires_on)-julianday(date('now')) AS INTEGER) AS daysRemaining FROM organization_documents WHERE organization_id=? AND expires_on BETWEEN date('now') AND date('now','+45 days')
-      UNION ALL SELECT d.id,d.document_type,d.document_type,NULL,e.full_name,d.expires_on,'employeeDocs',CAST(julianday(d.expires_on)-julianday(date('now')) AS INTEGER)
-      FROM employee_documents d JOIN employees e ON e.id=d.employee_id WHERE d.organization_id=? AND d.expires_on BETWEEN date('now') AND date('now','+45 days') ORDER BY expiresOn LIMIT 5`).all(orgId,orgId);
-    const expiredDocuments=db.prepare(`SELECT id,title AS name,document_type AS documentType,issuing_authority AS authority,NULL AS employeeName,expires_on AS expiresOn,'companyDocs' AS module,
-      CAST(julianday(expires_on)-julianday(date('now')) AS INTEGER) AS daysRemaining FROM organization_documents WHERE organization_id=? AND expires_on<date('now')
-      UNION ALL SELECT d.id,d.document_type,d.document_type,NULL,e.full_name,d.expires_on,'employeeDocs',CAST(julianday(d.expires_on)-julianday(date('now')) AS INTEGER)
-      FROM employee_documents d JOIN employees e ON e.id=d.employee_id WHERE d.organization_id=? AND d.expires_on<date('now') ORDER BY expiresOn DESC LIMIT 3`).all(orgId,orgId);
-    res.json({employeeCount:people,presentCount:metrics.present_count||0,pendingLeaves:metrics.pending_leaves||0,payrollTotal:metrics.payroll_total||0,absenceDays:metrics.absence_days||0,totalLeaveDays:metrics.leave_days||0,advancesTotal:metrics.advances_total||0,expiredContracts:metrics.expired_contracts||0,averageSalary:Math.round(metrics.average_salary||0),expiryBands:{7:bandCounts.days_7||0,15:bandCounts.days_15||0,30:bandCounts.days_30||0,45:bandCounts.days_45||0},dueDocuments,expiredDocuments});
+      FROM (${expiryUnion})`).get(...accessibleDocumentSources.map(source=>source.orgId)):{days_7:0,days_15:0,days_30:0,days_45:0};
+    const dueQueries=[];
+    if(canCompanyDocs)dueQueries.push(`SELECT id,title AS name,document_type AS documentType,issuing_authority AS authority,NULL AS employeeName,expires_on AS expiresOn,'companyDocs' AS module,CAST(julianday(expires_on)-julianday(date('now')) AS INTEGER) AS daysRemaining FROM organization_documents WHERE organization_id=? AND expires_on BETWEEN date('now') AND date('now','+45 days')`);
+    if(canEmployeeDocs)dueQueries.push(`SELECT d.id,d.document_type,d.document_type,NULL,e.full_name,d.expires_on,'employeeDocs',CAST(julianday(d.expires_on)-julianday(date('now')) AS INTEGER) FROM employee_documents d JOIN employees e ON e.id=d.employee_id WHERE d.organization_id=? AND d.expires_on BETWEEN date('now') AND date('now','+45 days')`);
+    const expiredQueries=[];
+    if(canCompanyDocs)expiredQueries.push(`SELECT id,title AS name,document_type AS documentType,issuing_authority AS authority,NULL AS employeeName,expires_on AS expiresOn,'companyDocs' AS module,CAST(julianday(expires_on)-julianday(date('now')) AS INTEGER) AS daysRemaining FROM organization_documents WHERE organization_id=? AND expires_on<date('now')`);
+    if(canEmployeeDocs)expiredQueries.push(`SELECT d.id,d.document_type,d.document_type,NULL,e.full_name,d.expires_on,'employeeDocs',CAST(julianday(d.expires_on)-julianday(date('now')) AS INTEGER) FROM employee_documents d JOIN employees e ON e.id=d.employee_id WHERE d.organization_id=? AND d.expires_on<date('now')`);
+    const dueDocuments=dueQueries.length?db.prepare(`${dueQueries.join(' UNION ALL ')} ORDER BY expiresOn LIMIT 5`).all(...accessibleDocumentSources.map(source=>source.orgId)):[];
+    const expiredDocuments=expiredQueries.length?db.prepare(`${expiredQueries.join(' UNION ALL ')} ORDER BY expiresOn DESC LIMIT 3`).all(...accessibleDocumentSources.map(source=>source.orgId)):[];
+    res.json({employeeCount:hasPermission(req.user,'employees','read')?people:0,presentCount:hasPermission(req.user,'attendance','read')?metrics.present_count||0:0,pendingLeaves:hasPermission(req.user,'leaves','read')?metrics.pending_leaves||0:0,payrollTotal:hasPermission(req.user,'payroll','read')?metrics.payroll_total||0:0,absenceDays:hasPermission(req.user,'absence','read')?metrics.absence_days||0:0,totalLeaveDays:hasPermission(req.user,'leaves','read')?metrics.leave_days||0:0,advancesTotal:hasPermission(req.user,'advances','read')?metrics.advances_total||0:0,expiredContracts:hasPermission(req.user,'contracts','read')?metrics.expired_contracts||0:0,averageSalary:hasPermission(req.user,'payroll','read')?Math.round(metrics.average_salary||0):0,expiryBands:hasDocuments?{7:bandCounts.days_7||0,15:bandCounts.days_15||0,30:bandCounts.days_30||0,45:bandCounts.days_45||0}:{7:0,15:0,30:0,45:0},dueDocuments:dueDocuments.filter(row=>row.module==='companyDocs'?canCompanyDocs:canEmployeeDocs),expiredDocuments:expiredDocuments.filter(row=>row.module==='companyDocs'?canCompanyDocs:canEmployeeDocs)});
   }catch(error){logSafeError(res,error);}
 });
 app.post('/api/setup/first-admin',async(req,res)=>{
@@ -164,7 +207,7 @@ app.post('/api/setup/first-admin',async(req,res)=>{
     const {organizationName,fullName,email,password}=req.body||{};
     if(!organizationName?.trim()||!fullName?.trim()||!email?.includes('@')||typeof password!=='string'||password.length<12)return res.status(422).json({code:'INVALID_SETUP',message:'Enter an organization, name, valid email, and password with at least 12 characters'});
     const organizationId=crypto.randomUUID(),userId=crypto.randomUUID();
-    const create=db.transaction(()=>{if(db.prepare('SELECT id FROM users LIMIT 1').get())throw Object.assign(new Error('Initial setup is already complete'),{status:409});db.prepare('INSERT INTO organizations(id,name) VALUES(?,?)').run(organizationId,organizationName.trim());db.prepare('INSERT INTO users(id,organization_id,email,full_name,password_hash,role) VALUES(?,?,?,?,?,?)').run(userId,organizationId,email.trim().toLowerCase(),fullName.trim(),bcrypt.hashSync(password,12),'admin');});
+    const create=db.transaction(()=>{if(db.prepare('SELECT id FROM users LIMIT 1').get())throw Object.assign(new Error('Initial setup is already complete'),{status:409});db.prepare('INSERT INTO organizations(id,name) VALUES(?,?)').run(organizationId,organizationName.trim());initializeOrganizationDefaults(organizationId);db.prepare('INSERT INTO users(id,organization_id,email,full_name,password_hash,role) VALUES(?,?,?,?,?,?)').run(userId,organizationId,email.trim().toLowerCase(),fullName.trim(),bcrypt.hashSync(password,12),'admin');});
     create();res.status(201).json({created:true});
   }catch(error){logSafeError(res,error);}
 });
@@ -174,44 +217,70 @@ app.post('/api/auth/login',async(req,res)=>{
     if(!user||!bcrypt.compareSync(String(password||''),user.password_hash))return res.status(401).json({code:'INVALID_CREDENTIALS',message:'Email or password is incorrect'});
     const token=crypto.randomBytes(32).toString('base64url');const sessionId=crypto.randomUUID();const expiresAt=new Date(Date.now()+12*60*60*1000).toISOString();
     db.prepare('INSERT INTO sessions(id,user_id,token_hash,expires_at) VALUES(?,?,?,?)').run(sessionId,user.id,hashToken(token),expiresAt);
-    res.json({token,expiresAt,user:{id:user.id,email:user.email,fullName:user.full_name,role:user.role}});
+    res.json({token,expiresAt,user:{id:user.id,email:user.email,fullName:user.full_name,role:user.role,permissions:getRolePermissions(user.organization_id,user.role)}});
   }catch(error){logSafeError(res,error);}
 });
-app.get('/api/auth/me',requireAuth,(req,res)=>res.json({user:{id:req.user.id,email:req.user.email,fullName:req.user.full_name,role:req.user.role}}));
+app.get('/api/auth/me',requireAuth,(req,res)=>res.json({user:{id:req.user.id,email:req.user.email,fullName:req.user.full_name,role:req.user.role,permissions:getRolePermissions(req.user.organization_id,req.user.role)}}));
 app.post('/api/auth/logout',requireAuth,(req,res)=>{db.prepare('DELETE FROM sessions WHERE token_hash=?').run(req.sessionTokenHash);res.sendStatus(204);});
+app.get('/api/organization/settings',requireAuth,(req,res)=>{
+  const settings=db.prepare('SELECT country_code AS countryCode,currency_code AS currencyCode,locale,timezone,date_format AS dateFormat,week_start AS weekStart,weekend_days AS weekendDays FROM organization_preferences WHERE organization_id=?').get(req.user.organization_id);
+  res.json({...settings,weekendDays:JSON.parse(settings.weekendDays),countries:countryProfiles});
+});
+app.put('/api/organization/settings',requireAuth,requireRole('admin'),(req,res)=>{
+  const {countryCode,currencyCode}=req.body||{};const profile=countryProfiles.find(country=>country.code===countryCode);
+  if(!profile||typeof currencyCode!=='string'||!countryProfiles.some(country=>country.currency===currencyCode))return res.status(422).json({code:'INVALID_ORGANIZATION_SETTINGS',message:'Select a supported country and currency'});
+  try{db.prepare(`UPDATE organization_preferences SET country_code=?,currency_code=?,locale=?,timezone=?,date_format=?,week_start=?,weekend_days=?,updated_at=CURRENT_TIMESTAMP WHERE organization_id=?`)
+    .run(profile.code,currencyCode,profile.locale,profile.timezone,profile.dateFormat,profile.weekStart,JSON.stringify(profile.weekendDays),req.user.organization_id);
+    audit(req.user,'organization.settings.updated','organization',req.user.organization_id,{countryCode,currencyCode});res.json({countryCode:profile.code,currencyCode,locale:profile.locale,timezone:profile.timezone,dateFormat:profile.dateFormat,weekStart:profile.weekStart,weekendDays:profile.weekendDays,countries:countryProfiles});
+  }catch(error){logSafeError(res,error);}
+});
+app.get('/api/admin/roles',requireAuth,requireRole('admin'),(req,res)=>{
+  const names={admin:['مدير النظام','System administrator'],hr:['الموارد البشرية','HR specialist'],manager:['مدير','Manager'],viewer:['مشاهد','Viewer']};
+  const items=roles.map(key=>({key,nameAr:names[key][0],nameEn:names[key][1],permissions:Object.fromEntries(permissionModules.map(module=>[module,Object.fromEntries(permissionActions.map(action=>[action,!!db.prepare('SELECT enabled FROM role_permissions WHERE organization_id=? AND role_key=? AND module_key=? AND action_key=?').get(req.user.organization_id,key,module,action)?.enabled]))]))}));
+  res.json({items,modules:permissionModules,actions:permissionActions});
+});
+app.put('/api/admin/roles/:roleKey/permissions',requireAuth,requireRole('admin'),(req,res)=>{
+  const {roleKey}=req.params,permissions=req.body?.permissions;
+  if(!roles.includes(roleKey)||roleKey==='admin')return res.status(422).json({code:'ROLE_PROTECTED',message:'The system administrator role cannot be changed'});
+  if(!permissions||typeof permissions!=='object'||Array.isArray(permissions))return res.status(422).json({code:'INVALID_PERMISSIONS',message:'Provide a permission map'});
+  try{const update=db.prepare('INSERT INTO role_permissions(organization_id,role_key,module_key,action_key,enabled) VALUES(?,?,?,?,?) ON CONFLICT(organization_id,role_key,module_key,action_key) DO UPDATE SET enabled=excluded.enabled,updated_at=CURRENT_TIMESTAMP');
+    const save=db.transaction(()=>{for(const module of permissionModules)for(const action of permissionActions){const value=permissions[module]?.[action];if(typeof value!=='boolean')throw Object.assign(new Error('Every permission must be true or false'),{status:422});update.run(req.user.organization_id,roleKey,module,action,value?1:0);}});save();
+    audit(req.user,'role.permissions.updated','role',roleKey);res.json({updated:true,role:roleKey});
+  }catch(error){if(error.status)return res.status(error.status).json({code:'INVALID_PERMISSIONS',message:error.message});logSafeError(res,error);}
+});
 app.get('/api/admin/users',requireAuth,requireRole('admin'),(req,res)=>{
   const items=db.prepare('SELECT id,email,full_name AS fullName,role,is_active AS isActive,created_at AS createdAt FROM users WHERE organization_id=? ORDER BY full_name').all(req.user.organization_id);
   res.json({items,total:items.length});
 });
 app.post('/api/admin/users',requireAuth,requireRole('admin'),(req,res)=>{
   const {email,fullName,password,role='hr'}=req.body||{};
-  if(!email?.includes('@')||!fullName?.trim()||typeof password!=='string'||password.length<12||!['admin','hr','manager','viewer'].includes(role))return res.status(422).json({code:'VALIDATION_ERROR',message:'Provide a valid email, full name, role, and password with at least 12 characters'});
+  if(!email?.includes('@')||!fullName?.trim()||typeof password!=='string'||password.length<12||!roles.includes(role))return res.status(422).json({code:'VALIDATION_ERROR',message:'Provide a valid email, full name, role, and password with at least 12 characters'});
   const id=crypto.randomUUID();try{db.prepare('INSERT INTO users(id,organization_id,email,full_name,password_hash,role) VALUES(?,?,?,?,?,?)').run(id,req.user.organization_id,email.trim().toLowerCase(),fullName.trim(),bcrypt.hashSync(password,12),role);audit(req.user,'user.created','user',id,{email,role});res.status(201).json({id,email:email.trim().toLowerCase(),fullName:fullName.trim(),role,isActive:true});}catch(error){if(String(error.code).includes('CONSTRAINT'))return res.status(409).json({code:'EMAIL_EXISTS',message:'A user with this email already exists'});logSafeError(res,error);}
 });
 app.patch('/api/admin/users/:id',requireAuth,requireRole('admin'),(req,res)=>{
-  const {role,isActive}=req.body||{};if(role!==undefined&&!['admin','hr','manager','viewer'].includes(role))return res.status(422).json({code:'INVALID_ROLE',message:'Role is not supported'});
+  const {role,isActive}=req.body||{};if(role!==undefined&&!roles.includes(role))return res.status(422).json({code:'INVALID_ROLE',message:'Role is not supported'});
   const user=db.prepare('SELECT id FROM users WHERE id=? AND organization_id=?').get(req.params.id,req.user.organization_id);if(!user)return res.status(404).json({code:'NOT_FOUND',message:'User not found'});
   if(req.params.id===req.user.id&&(isActive===false||role&&role!=='admin'))return res.status(409).json({code:'SELF_LOCKOUT',message:'You cannot remove your own administrator access'});
   if(role!==undefined)db.prepare('UPDATE users SET role=? WHERE id=?').run(role,req.params.id);
   if(isActive!==undefined){db.prepare('UPDATE users SET is_active=? WHERE id=?').run(isActive?1:0,req.params.id);if(!isActive)db.prepare('DELETE FROM sessions WHERE user_id=?').run(req.params.id);}
   audit(req.user,'user.updated','user',req.params.id,{role,isActive});res.json({updated:true});
 });
-app.get('/api/v1/modules/:module',requireAuth,(req,res)=>{
+app.get('/api/v1/modules/:module',requireAuth,requirePermission(req=>req.params.module,'read'),(req,res)=>{
   const {module}=req.params;if(!allowedModules.has(module)&&!['employeeDocs','companyDocs'].includes(module))return res.status(404).json({code:'MODULE_NOT_FOUND',message:'Module not found'});
   const page=Math.max(1,Number(req.query.page)||1),pageSize=Math.min(200,Math.max(1,Number(req.query.pageSize)||50));
   try{const result=findModulePage(req.user.organization_id,module,{q:String(req.query.q||'').trim(),status:String(req.query.status||''),limit:pageSize,offset:(page-1)*pageSize});res.json({...result,page,pageSize,pageCount:Math.ceil(result.total/pageSize)});}catch(error){logSafeError(res,error);}
 });
-app.post('/api/v1/modules/:module',requireAuth,requireRole(...writeRoles),(req,res)=>{
+app.post('/api/v1/modules/:module',requireAuth,requirePermission(req=>req.params.module,'create'),(req,res)=>{
   const {module}=req.params;if(!allowedModules.has(module)&&!['employeeDocs','companyDocs'].includes(module))return res.status(404).json({code:'MODULE_NOT_FOUND',message:'Module not found'});
   const issue=validateRecord(module,req.body);if(issue)return res.status(422).json({code:'VALIDATION_ERROR',message:issue});
   const id=crypto.randomUUID();try{const item=saveModuleRecord(req.user,module,id,req.body,true);res.status(201).json(item);}catch(error){if(error.status)return res.status(error.status).json({code:error.code,message:error.message});if(String(error.code).includes('CONSTRAINT'))return res.status(409).json({code:'CONFLICT',message:'A record with these details already exists'});logSafeError(res,error);}
 });
-app.put('/api/v1/modules/:module/:id',requireAuth,requireRole(...writeRoles),(req,res)=>{
+app.put('/api/v1/modules/:module/:id',requireAuth,requirePermission(req=>req.params.module,'update'),(req,res)=>{
   const {module,id}=req.params;if(!allowedModules.has(module)&&!['employeeDocs','companyDocs'].includes(module))return res.status(404).json({code:'MODULE_NOT_FOUND',message:'Module not found'});
   const issue=validateRecord(module,req.body);if(issue)return res.status(422).json({code:'VALIDATION_ERROR',message:issue});
   try{if(!moduleRecordExists(req.user.organization_id,module,id))return res.status(404).json({code:'NOT_FOUND',message:'Record not found'});const item=saveModuleRecord(req.user,module,id,req.body);res.json(item);}catch(error){if(error.status)return res.status(error.status).json({code:error.code,message:error.message});logSafeError(res,error);}
 });
-app.delete('/api/v1/modules/:module/:id',requireAuth,requireRole(...writeRoles),(req,res)=>{
+app.delete('/api/v1/modules/:module/:id',requireAuth,requirePermission(req=>req.params.module,'delete'),(req,res)=>{
   const {module,id}=req.params;if(!allowedModules.has(module)&&!['employeeDocs','companyDocs'].includes(module))return res.status(404).json({code:'MODULE_NOT_FOUND',message:'Module not found'});
   try{
     let result;let files=[];
@@ -227,7 +296,7 @@ app.delete('/api/v1/modules/:module/:id',requireAuth,requireRole(...writeRoles),
     audit(req.user,'record.deleted',module,id);res.sendStatus(204);
   }catch(error){logSafeError(res,error);}
 });
-app.put('/api/v1/modules/:module/:id/attachment',requireAuth,requireRole(...writeRoles),express.raw({type:['application/pdf','image/png','image/jpeg','image/webp'],limit:'8mb'}),(req,res)=>{
+app.put('/api/v1/modules/:module/:id/attachment',requireAuth,requirePermission(req=>req.params.module,'update'),express.raw({type:['application/pdf','image/png','image/jpeg','image/webp'],limit:'8mb'}),(req,res)=>{
   const {module,id}=req.params;const contentType=req.headers['content-type'];
   if(!['companyDocs','employeeDocs'].includes(module))return res.status(404).json({code:'MODULE_NOT_FOUND',message:'Attachments are only supported for HR documents'});
   if(!Buffer.isBuffer(req.body)||!req.body.length)return res.status(422).json({code:'EMPTY_FILE',message:'Choose a non-empty PDF or image file'});
@@ -243,19 +312,20 @@ app.put('/api/v1/modules/:module/:id/attachment',requireAuth,requireRole(...writ
     audit(req.user,'attachment.uploaded',module,id,{name:originalName,bytes:req.body.length});res.status(201).json({id:attachmentId,name:originalName,size:req.body.length});
   }catch(error){if(error.type==='entity.too.large')return res.status(413).json({code:'FILE_TOO_LARGE',message:'Maximum file size is 8 MB'});logSafeError(res,error);}
 });
-app.get('/api/v1/attachments/:id',requireAuth,(req,res)=>{
+app.get('/api/v1/attachments/:id',requireAuth,requireAttachmentPermission('read'),(req,res)=>{
   try{const item=db.prepare('SELECT * FROM attachments WHERE id=? AND organization_id=?').get(req.params.id,req.user.organization_id);if(!item)return res.status(404).json({code:'NOT_FOUND',message:'Attachment not found'});const file=path.join(documentDir,path.basename(item.stored_name));if(!fs.existsSync(file))return res.status(404).json({code:'FILE_MISSING',message:'Attachment file is missing'});res.type(item.content_type).download(file,item.original_name);}catch(error){logSafeError(res,error);}
 });
-app.delete('/api/v1/attachments/:id',requireAuth,requireRole(...writeRoles),(req,res)=>{
+app.delete('/api/v1/attachments/:id',requireAuth,requireAttachmentPermission('delete'),(req,res)=>{
   try{const item=db.prepare('SELECT * FROM attachments WHERE id=? AND organization_id=?').get(req.params.id,req.user.organization_id);if(!item)return res.status(404).json({code:'NOT_FOUND',message:'Attachment not found'});db.prepare('DELETE FROM attachments WHERE id=?').run(item.id);fs.rmSync(path.join(documentDir,path.basename(item.stored_name)),{force:true});audit(req.user,'attachment.deleted','attachment',item.id);res.sendStatus(204);}catch(error){logSafeError(res,error);}
 });
-app.get('/api/v1/documents/expiring',requireAuth,(req,res)=>{
+app.get('/api/v1/documents/expiring',requireAuth,requireAnyPermission(['companyDocs','employeeDocs'],'read'),(req,res)=>{
   const withinDays=Math.max(0,Math.min(365,Number(req.query.withinDays)||45));
   try{
     const rows=db.prepare(`SELECT id,title AS name,document_type AS category,document_number AS documentNo,expires_on AS expiresOn,'companyDocs' AS module,NULL AS employeeName FROM organization_documents WHERE organization_id=? AND expires_on<=date('now',?)
       UNION ALL SELECT d.id,d.document_type,d.document_type,d.document_number,d.expires_on,'employeeDocs',e.full_name FROM employee_documents d JOIN employees e ON e.id=d.employee_id WHERE d.organization_id=? AND d.expires_on<=date('now',?) ORDER BY expiresOn`)
       .all(req.user.organization_id,`+${withinDays} days`,req.user.organization_id,`+${withinDays} days`);
-    res.json({items:rows,total:rows.length,withinDays});
+    const visible=rows.filter(row=>hasPermission(req.user,row.module,'read'));
+    res.json({items:visible,total:visible.length,withinDays});
   }catch(error){logSafeError(res,error);}
 });
 app.get('/api/v1/audit-events',requireAuth,requireRole('admin'),(req,res)=>{

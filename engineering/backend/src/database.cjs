@@ -25,6 +25,26 @@ function openDatabase(dataDir) {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(organization_id,email)
     );
+    CREATE TABLE IF NOT EXISTS organization_preferences (
+      organization_id TEXT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+      country_code TEXT NOT NULL DEFAULT 'SA',
+      currency_code TEXT NOT NULL DEFAULT 'SAR',
+      locale TEXT NOT NULL DEFAULT 'ar-SA',
+      timezone TEXT NOT NULL DEFAULT 'Asia/Riyadh',
+      date_format TEXT NOT NULL DEFAULT 'dd/MM/yyyy',
+      week_start INTEGER NOT NULL DEFAULT 0 CHECK(week_start BETWEEN 0 AND 6),
+      weekend_days TEXT NOT NULL DEFAULT '[5,6]',
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS role_permissions (
+      organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      role_key TEXT NOT NULL CHECK(role_key IN ('admin','hr','manager','viewer')),
+      module_key TEXT NOT NULL,
+      action_key TEXT NOT NULL CHECK(action_key IN ('read','create','update','delete','export')),
+      enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0,1)),
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY(organization_id,role_key,module_key,action_key)
+    );
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -108,6 +128,23 @@ function openDatabase(dataDir) {
     CREATE INDEX IF NOT EXISTS app_records_module_page_idx ON app_records(organization_id,module,updated_at DESC,id DESC);
     CREATE INDEX IF NOT EXISTS audit_org_time_idx ON audit_events(organization_id,occurred_at DESC);
   `);
+  const modules=['employees','attendance','absence','leaves','payroll','advances','contracts','files','reports','companyDocs','employeeDocs'];
+  const actions=['read','create','update','delete','export'];
+  const defaults={
+    admin:new Set(modules.flatMap(module=>actions.map(action=>`${module}:${action}`))),
+    hr:new Set(modules.filter(module=>!['payroll','advances'].includes(module)).flatMap(module=>actions.map(action=>`${module}:${action}`))),
+    manager:new Set(modules.filter(module=>!['payroll','advances'].includes(module)).flatMap(module=>['read','create','update','export'].map(action=>`${module}:${action}`))),
+    viewer:new Set(['employees','attendance','absence','leaves','reports'].flatMap(module=>['read','export'].map(action=>`${module}:${action}`))),
+  };
+  const preferenceInsert=db.prepare('INSERT OR IGNORE INTO organization_preferences(organization_id) VALUES(?)');
+  const permissionInsert=db.prepare('INSERT OR IGNORE INTO role_permissions(organization_id,role_key,module_key,action_key,enabled) VALUES(?,?,?,?,?)');
+  const ensureDefaults=db.transaction(organizationId=>{
+    preferenceInsert.run(organizationId);
+    for(const [role,permissions] of Object.entries(defaults))for(const module of modules)for(const action of actions){
+      permissionInsert.run(organizationId,role,module,action,permissions.has(`${module}:${action}`)?1:0);
+    }
+  });
+  for(const organization of db.prepare('SELECT id FROM organizations').all())ensureDefaults(organization.id);
   return db;
 }
 
