@@ -17,7 +17,8 @@ const egyptRegulations = require('./regulations/egypt.cjs');
 const jordanRegulations = require('./regulations/jordan.cjs');
 const iraqRegulations = require('./regulations/iraq.cjs');
 const moroccoRegulations = require('./regulations/morocco.cjs');
-const regulationsByCountry={SA:saudiRegulations,AE:uaeRegulations,BH:bahrainRegulations,KW:kuwaitRegulations,OM:omanRegulations,EG:egyptRegulations,JO:jordanRegulations,IQ:iraqRegulations,MA:moroccoRegulations};
+const algeriaRegulations = require('./regulations/algeria.cjs');
+const regulationsByCountry={SA:saudiRegulations,AE:uaeRegulations,BH:bahrainRegulations,KW:kuwaitRegulations,OM:omanRegulations,EG:egyptRegulations,JO:jordanRegulations,IQ:iraqRegulations,MA:moroccoRegulations,DZ:algeriaRegulations};
 
 const dataDir = process.env.RAKEZA_DATA_DIR || path.join(os.homedir(), 'AppData', 'Local', 'Rakeza HR', 'data');
 const documentDir = path.join(dataDir, 'documents');
