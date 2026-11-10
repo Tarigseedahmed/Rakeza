@@ -188,6 +188,17 @@ function saveModuleRecord(user,module,id,record,created=false){
 }
 
 app.get('/api/health',(_req,res)=>res.json({ok:true,service:'rakeza-local-api',version:1}));
+app.get('/api/desktop/document-expiries',(req,res)=>{
+  const secret=String(req.headers['x-rakeza-desktop-secret']||''),expected=String(process.env.RAKEZA_DESKTOP_SECRET||'');
+  if(!expected||Buffer.byteLength(secret)!==Buffer.byteLength(expected)||!crypto.timingSafeEqual(Buffer.from(secret),Buffer.from(expected)))return res.status(404).json({code:'NOT_FOUND',message:'Not found'});
+  try{
+    const items=db.prepare(`SELECT id,'companyDocs' AS module,expires_on AS expiresOn FROM organization_documents WHERE expires_on BETWEEN date('now') AND date('now','+45 days')
+      UNION ALL SELECT id,'employeeDocs' AS module,expires_on AS expiresOn FROM employee_documents WHERE expires_on BETWEEN date('now') AND date('now','+45 days')`).all();
+    const today=new Date().toISOString().slice(0,10);
+    const withDays=items.map(item=>{const difference=Date.parse(`${item.expiresOn}T00:00:00Z`)-Date.parse(`${today}T00:00:00Z`);return {...item,daysRemaining:Math.max(0,Math.floor(difference/86400000))};});
+    res.setHeader('Cache-Control','no-store');res.json({items:withDays});
+  }catch(error){logSafeError(res,error);}
+});
 app.get('/api/setup/status',(_req,res)=>res.json({initialized:!!db.prepare('SELECT id FROM users LIMIT 1').get()}));
 app.get('/api/v1/overview',requireAuth,(req,res)=>{
   try{

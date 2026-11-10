@@ -8,5 +8,7 @@ contextBridge.exposeInMainWorld('rakeza', Object.freeze({
   getToken: () => ipcRenderer.invoke('auth:get-token'),
   setToken: (token) => ipcRenderer.invoke('auth:set-token', token),
   clearToken: () => ipcRenderer.invoke('auth:clear-token'),
+  getNotificationSettings: () => ipcRenderer.invoke('notifications:get-settings'),
+  setNotificationsEnabled: (enabled) => ipcRenderer.invoke('notifications:set-enabled', enabled),
   logout: () => ipcRenderer.invoke('app:logout'),
 }));

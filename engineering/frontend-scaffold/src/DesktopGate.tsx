@@ -6,7 +6,7 @@ import './desktop-gate.css';
 type Mode='standalone'|'host'|'client';
 type Deployment={mode:Mode;apiBaseUrl:string;organizationName:string};
 type User={id:string;email:string;fullName:string;role:string;permissions?:Record<string,Record<string,boolean>>};
-type DesktopBridge={getDeployment:()=>Promise<Deployment|null>;saveDeployment:(value:Record<string,unknown>)=>Promise<Deployment>;resetDeployment:()=>Promise<boolean>;chooseTlsFiles:()=>Promise<{tlsCert:string;tlsKey:string}|null>;getToken:()=>Promise<string|null>;setToken:(token:string)=>Promise<boolean>;clearToken:()=>Promise<boolean>};
+type DesktopBridge={getDeployment:()=>Promise<Deployment|null>;saveDeployment:(value:Record<string,unknown>)=>Promise<Deployment>;resetDeployment:()=>Promise<boolean>;chooseTlsFiles:()=>Promise<{tlsCert:string;tlsKey:string}|null>;getToken:()=>Promise<string|null>;setToken:(token:string)=>Promise<boolean>;clearToken:()=>Promise<boolean>;getNotificationSettings:()=>Promise<{enabled:boolean;available:boolean;mode:string|null}>;setNotificationsEnabled:(enabled:boolean)=>Promise<{enabled:boolean;available:boolean;mode:string|null}>};
 declare global { interface Window { rakeza?:DesktopBridge } }
 type Stage='loading'|'deployment'|'first-admin'|'host-setup-needed'|'login'|'app'|'error';
 
