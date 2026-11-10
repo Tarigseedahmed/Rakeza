@@ -19,7 +19,10 @@ const iraqRegulations = require('./regulations/iraq.cjs');
 const moroccoRegulations = require('./regulations/morocco.cjs');
 const algeriaRegulations = require('./regulations/algeria.cjs');
 const tunisiaRegulations = require('./regulations/tunisia.cjs');
-const regulationsByCountry={SA:saudiRegulations,AE:uaeRegulations,BH:bahrainRegulations,KW:kuwaitRegulations,OM:omanRegulations,EG:egyptRegulations,JO:jordanRegulations,IQ:iraqRegulations,MA:moroccoRegulations,DZ:algeriaRegulations,TN:tunisiaRegulations};
+const qatarRegulations = require('./regulations/qatar.cjs');
+const libyaRegulations = require('./regulations/libya.cjs');
+const manualArabRegulations = require('./regulations/manual-arab.cjs');
+const regulationsByCountry={SA:saudiRegulations,AE:uaeRegulations,BH:bahrainRegulations,KW:kuwaitRegulations,QA:qatarRegulations,OM:omanRegulations,EG:egyptRegulations,JO:jordanRegulations,IQ:iraqRegulations,MA:moroccoRegulations,DZ:algeriaRegulations,TN:tunisiaRegulations,LY:libyaRegulations,LB:manualArabRegulations('LB','لبنان','وزارة العمل اللبنانية','https://www.mol.gov.lb/'),SY:manualArabRegulations('SY','سوريا','وزارة الشؤون الاجتماعية والعمل','https://molsa.gov.sy/'),PS:manualArabRegulations('PS','فلسطين','وزارة العمل الفلسطينية','https://www.mol.pna.ps/'),SD:manualArabRegulations('SD','السودان','وزارة العمل والإصلاح الإداري','https://mol.gov.sd/'),YE:manualArabRegulations('YE','اليمن','وزارة الشؤون الاجتماعية والعمل','https://yemen.gov.ye/'),MR:manualArabRegulations('MR','موريتانيا','وزارة الوظيفة العمومية والعمل','https://www.fonctionpublique.gov.mr/'),SO:manualArabRegulations('SO','الصومال','وزارة العمل والشؤون الاجتماعية','https://molsa.gov.so/'),DJ:manualArabRegulations('DJ','جيبوتي','وزارة العمل المكلفة بالإصلاح الإداري','https://travail.gouv.dj/'),KM:manualArabRegulations('KM','جزر القمر','وزارة العمل','https://comores.gouv.km/')};
 
 const dataDir = process.env.RAKEZA_DATA_DIR || path.join(os.homedir(), 'AppData', 'Local', 'Rakeza HR', 'data');
 const documentDir = path.join(dataDir, 'documents');
@@ -46,6 +49,16 @@ const countryProfiles = [
   {code:'MA',nameAr:'المغرب',nameEn:'Morocco',currency:'MAD',locale:'ar-MA',timezone:'Africa/Casablanca',dateFormat:'dd/MM/yyyy',weekStart:1,weekendDays:[6,0]},
   {code:'DZ',nameAr:'الجزائر',nameEn:'Algeria',currency:'DZD',locale:'ar-DZ',timezone:'Africa/Algiers',dateFormat:'dd/MM/yyyy',weekStart:0,weekendDays:[5,6]},
   {code:'TN',nameAr:'تونس',nameEn:'Tunisia',currency:'TND',locale:'ar-TN',timezone:'Africa/Tunis',dateFormat:'dd/MM/yyyy',weekStart:1,weekendDays:[6,0]},
+  {code:'LB',nameAr:'لبنان',nameEn:'Lebanon',currency:'LBP',locale:'ar-LB',timezone:'Asia/Beirut',dateFormat:'dd/MM/yyyy',weekStart:0,weekendDays:[5,6]},
+  {code:'LY',nameAr:'ليبيا',nameEn:'Libya',currency:'LYD',locale:'ar-LY',timezone:'Africa/Tripoli',dateFormat:'dd/MM/yyyy',weekStart:0,weekendDays:[5,6]},
+  {code:'SY',nameAr:'سوريا',nameEn:'Syria',currency:'SYP',locale:'ar-SY',timezone:'Asia/Damascus',dateFormat:'dd/MM/yyyy',weekStart:0,weekendDays:[5,6]},
+  {code:'PS',nameAr:'فلسطين',nameEn:'Palestine',currency:'ILS',locale:'ar-PS',timezone:'Asia/Gaza',dateFormat:'dd/MM/yyyy',weekStart:0,weekendDays:[5,6]},
+  {code:'SD',nameAr:'السودان',nameEn:'Sudan',currency:'SDG',locale:'ar-SD',timezone:'Africa/Khartoum',dateFormat:'dd/MM/yyyy',weekStart:0,weekendDays:[5,6]},
+  {code:'YE',nameAr:'اليمن',nameEn:'Yemen',currency:'YER',locale:'ar-YE',timezone:'Asia/Aden',dateFormat:'dd/MM/yyyy',weekStart:0,weekendDays:[5,6]},
+  {code:'MR',nameAr:'موريتانيا',nameEn:'Mauritania',currency:'MRU',locale:'ar-MR',timezone:'Africa/Nouakchott',dateFormat:'dd/MM/yyyy',weekStart:0,weekendDays:[5,6]},
+  {code:'SO',nameAr:'الصومال',nameEn:'Somalia',currency:'SOS',locale:'ar-SO',timezone:'Africa/Mogadishu',dateFormat:'dd/MM/yyyy',weekStart:0,weekendDays:[5,6]},
+  {code:'DJ',nameAr:'جيبوتي',nameEn:'Djibouti',currency:'DJF',locale:'ar-DJ',timezone:'Africa/Djibouti',dateFormat:'dd/MM/yyyy',weekStart:0,weekendDays:[5,6]},
+  {code:'KM',nameAr:'جزر القمر',nameEn:'Comoros',currency:'KMF',locale:'ar-KM',timezone:'Indian/Comoro',dateFormat:'dd/MM/yyyy',weekStart:0,weekendDays:[5,6]},
 ];
 
 app.disable('x-powered-by');
