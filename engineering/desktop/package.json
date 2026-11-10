@@ -7,7 +7,7 @@
   "main": "main.cjs",
   "scripts": {
     "dev": "wait-on tcp:5173 && electron . --dev",
-    "package": "electron-builder --win nsis",
+    "package": "electron-builder --win nsis --config.directories.output=../../release/installer",
     "package:dir": "electron-builder --win --dir"
   },
   "dependencies": { "rakeza-hr-backend": "*" },
