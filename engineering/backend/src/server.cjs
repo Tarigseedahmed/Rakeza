@@ -9,6 +9,9 @@ const bcrypt = require('bcryptjs');
 const { rateLimit } = require('express-rate-limit');
 const { openDatabase } = require('./database.cjs');
 const saudiRegulations = require('./regulations/saudi.cjs');
+const uaeRegulations = require('./regulations/uae.cjs');
+const bahrainRegulations = require('./regulations/bahrain.cjs');
+const regulationsByCountry={SA:saudiRegulations,AE:uaeRegulations,BH:bahrainRegulations};
 
 const dataDir = process.env.RAKEZA_DATA_DIR || path.join(os.homedir(), 'AppData', 'Local', 'Rakeza HR', 'data');
 const documentDir = path.join(dataDir, 'documents');
@@ -230,21 +233,26 @@ app.get('/api/organization/settings',requireAuth,(req,res)=>{
 app.get('/api/compliance/profile',requireAuth,(req,res)=>{
   const setting=db.prepare('SELECT country_code FROM organization_preferences WHERE organization_id=?').get(req.user.organization_id);
   const countryCode=setting?.country_code||'SA';
-  res.json({countryCode,asOf:new Date().toISOString().slice(0,10),status:countryCode==='SA'?'advisory_implementation':'regional_profile_only',rules:countryCode==='SA'?saudiRegulations.rules:[],sources:countryCode==='SA'?saudiRegulations.sources:[]});
+  const profile=regulationsByCountry[countryCode];
+  res.json({countryCode,asOf:new Date().toISOString().slice(0,10),status:profile?'advisory_implementation':'regional_profile_only',rules:profile?.rules||[],sources:profile?.sources||[]});
 });
-app.post('/api/compliance/saudi/estimate',requireAuth,requirePermission('payroll','read'),(req,res)=>{
+app.post('/api/compliance/:countryCode/estimate',requireAuth,requirePermission('payroll','read'),(req,res)=>{
   const setting=db.prepare('SELECT country_code FROM organization_preferences WHERE organization_id=?').get(req.user.organization_id);
-  if(setting?.country_code!=='SA')return res.status(409).json({code:'COUNTRY_MISMATCH',message:'Saudi rule estimates are available only when the organization country is Saudi Arabia'});
+  const countryCode=String(req.params.countryCode||'').toUpperCase(),profile=regulationsByCountry[countryCode];
+  if(!profile)return res.status(404).json({code:'COMPLIANCE_PROFILE_UNAVAILABLE',message:'No rule profile is available for this country'});
+  if(setting?.country_code!==countryCode)return res.status(409).json({code:'COUNTRY_MISMATCH',message:'Rule estimates are available only for the organization country'});
   try{
     const {kind,...input}=req.body||{};
     let result;
-    if(kind==='annualLeave')result=saudiRegulations.minimumAnnualLeave(input);
-    else if(kind==='endOfService')result=saudiRegulations.estimateEndOfService(input);
-    else if(kind==='overtime')result=saudiRegulations.estimateOvertime(input);
-    else if(kind==='socialInsurance')result=saudiRegulations.estimateSocialInsurance(input);
+    if(kind==='annualLeave')result=profile.minimumAnnualLeave(input);
+    else if(kind==='endOfService')result=profile.estimateEndOfService(input);
+    else if(kind==='overtime')result=profile.estimateOvertime(input);
+    else if(kind==='socialInsurance')result=profile.estimateSocialInsurance(input);
     else return res.status(422).json({code:'INVALID_ESTIMATE_KIND',message:'Choose a supported estimate type'});
-    audit(req.user,'compliance.estimate.created',kind,result.ruleId||null,{requiresHumanReview:true});
-    return res.json({countryCode:'SA',currencyCode:'SAR',advisory:true,...result});
+    if(!result)return res.status(422).json({code:'ESTIMATE_UNAVAILABLE',message:'This estimate type is not available for the selected country'});
+    audit(req.user,'compliance.estimate.created',`${countryCode}:${kind}`,result.ruleId||null,{requiresHumanReview:true});
+    const currencyCode=countryProfiles.find(country=>country.code===countryCode)?.currency||null;
+    return res.json({countryCode,currencyCode,advisory:true,...result});
   }catch(error){if(error.status===422)return res.status(422).json({code:'INVALID_ESTIMATE_INPUT',message:error.message});return logSafeError(res,error);}
 });
 app.put('/api/organization/settings',requireAuth,requireRole('admin'),(req,res)=>{
