@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import { ArrowLeft, Database, Globe2, HardDrive, KeyRound, LoaderCircle, LockKeyhole, Network, ShieldCheck } from 'lucide-react';
 import { Dashboard } from './Dashboard';
 import './desktop-gate.css';
+const rakezaMark = './rakeza-mark.jpg';
 
 type Mode='standalone'|'host'|'client';
 type Deployment={mode:Mode;apiBaseUrl:string;organizationName:string};
@@ -29,7 +30,7 @@ function DesktopGateBody(){
   if(stage==='app'&&user)return <Dashboard apiBaseUrl={apiBaseUrl} token={token} user={user} onLogout={logout} onChangeDeployment={()=>{void window.rakeza!.resetDeployment();}}/>;
   return <main className="gate" dir={isAr?'rtl':'ltr'} lang={lang}>
     <div className="gate-language"><button onClick={()=>setLang(isAr?'en':'ar')}><Globe2 size={16}/>{isAr?'English':'العربية'}</button></div>
-    <section className="gate-card"><div className="gate-brand"><span><img src="/rakeza-mark.jpg" alt="Rakeza HR"/></span><div><b>{tx('ركيزة (Rakeza HR)','Rakeza HR')}</b><small>Human Capital Platform</small></div></div>
+    <section className="gate-card"><div className="gate-brand"><span><img src={rakezaMark} alt="Rakeza HR"/></span><div><b>{tx('ركيزة (Rakeza HR)','Rakeza HR')}</b><small>Human Capital Platform</small></div></div>
       {stage==='loading'&&<div className="gate-loading"><LoaderCircle className="spin" size={25}/>{tx('جارٍ تهيئة البرنامج…','Preparing Rakeza HR…')}</div>}
       {stage==='deployment'&&<form onSubmit={saveDeployment} className="gate-form"><div className="gate-title"><h1>{tx('إعداد البرنامج','Set up Rakeza HR')}</h1><p>{tx('اختر مكان حفظ البيانات وطريقة اتصال الأجهزة.','Choose where data is stored and how devices connect.')}</p></div>
         <div className="mode-options">

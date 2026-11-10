@@ -2,19 +2,22 @@
   "name": "rakeza-hr-desktop",
   "private": true,
   "version": "0.1.0",
+  "description": "Bilingual Arabic and English human resources desktop system",
+  "author": "Rakeza HR",
   "main": "main.cjs",
   "scripts": {
     "dev": "wait-on tcp:5173 && electron . --dev",
-    "package": "electron-builder --win nsis"
+    "package": "electron-builder --win nsis",
+    "package:dir": "electron-builder --win --dir"
   },
   "dependencies": { "rakeza-hr-backend": "*" },
-  "devDependencies": { "electron": "latest", "electron-builder": "latest", "wait-on": "latest" },
+  "devDependencies": { "electron": "45.2.3", "electron-builder": "26.18.0", "wait-on": "latest" },
   "build": {
     "appId": "com.rakeza.hr",
     "productName": "Rakeza HR",
     "asar": true,
     "npmRebuild": false,
-    "directories": { "output": "../../release" },
+    "directories": { "output": "../../release/desktop" },
     "files": ["main.cjs", "preload.cjs", "assets/**/*", "node_modules/**/*"],
     "extraResources": [{ "from": "../frontend-scaffold/dist", "to": "app" }],
     "asarUnpack": ["**/node_modules/better-sqlite3/**"],
