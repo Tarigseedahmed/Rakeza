@@ -11,7 +11,8 @@ const { openDatabase } = require('./database.cjs');
 const saudiRegulations = require('./regulations/saudi.cjs');
 const uaeRegulations = require('./regulations/uae.cjs');
 const bahrainRegulations = require('./regulations/bahrain.cjs');
-const regulationsByCountry={SA:saudiRegulations,AE:uaeRegulations,BH:bahrainRegulations};
+const kuwaitRegulations = require('./regulations/kuwait.cjs');
+const regulationsByCountry={SA:saudiRegulations,AE:uaeRegulations,BH:bahrainRegulations,KW:kuwaitRegulations};
 
 const dataDir = process.env.RAKEZA_DATA_DIR || path.join(os.homedir(), 'AppData', 'Local', 'Rakeza HR', 'data');
 const documentDir = path.join(dataDir, 'documents');
